@@ -38,164 +38,158 @@ import org.apache.rocketmq.remoting.netty.NettyServerConfig;
 import org.apache.rocketmq.remoting.netty.TlsSystemConfig;
 import org.apache.rocketmq.srvutil.FileWatchService;
 
-
 public class NamesrvController {
-    private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
+	private static final InternalLogger log = InternalLoggerFactory.getLogger(LoggerName.NAMESRV_LOGGER_NAME);
 
-    private final NamesrvConfig namesrvConfig;
+	private final NamesrvConfig namesrvConfig;
 
-    private final NettyServerConfig nettyServerConfig;
+	private final NettyServerConfig nettyServerConfig;
 
-    private final ScheduledExecutorService scheduledExecutorService = Executors.newSingleThreadScheduledExecutor(new ThreadFactoryImpl(
-        "NSScheduledThread"));
-    private final KVConfigManager kvConfigManager;
-    private final RouteInfoManager routeInfoManager;
+	private final ScheduledExecutorService scheduledExecutorService = Executors
+			.newSingleThreadScheduledExecutor(new ThreadFactoryImpl("NSScheduledThread"));
+	private final KVConfigManager kvConfigManager;
+	private final RouteInfoManager routeInfoManager;
 
-    private RemotingServer remotingServer;
+	private RemotingServer remotingServer;
 
-    private BrokerHousekeepingService brokerHousekeepingService;
+	private BrokerHousekeepingService brokerHousekeepingService;
 
-    private ExecutorService remotingExecutor;
+	private ExecutorService remotingExecutor;
 
-    private Configuration configuration;
-    private FileWatchService fileWatchService;
+	private Configuration configuration;
+	private FileWatchService fileWatchService;
 
-    public NamesrvController(NamesrvConfig namesrvConfig, NettyServerConfig nettyServerConfig) {
-        this.namesrvConfig = namesrvConfig;
-        this.nettyServerConfig = nettyServerConfig;
-        this.kvConfigManager = new KVConfigManager(this);
-        this.routeInfoManager = new RouteInfoManager();
-        this.brokerHousekeepingService = new BrokerHousekeepingService(this);
-        this.configuration = new Configuration(
-            log,
-            this.namesrvConfig, this.nettyServerConfig
-        );
-        this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
-    }
+	public NamesrvController(NamesrvConfig namesrvConfig, NettyServerConfig nettyServerConfig) {
+		this.namesrvConfig = namesrvConfig;
+		this.nettyServerConfig = nettyServerConfig;
+		this.kvConfigManager = new KVConfigManager(this);
+		this.routeInfoManager = new RouteInfoManager();
+		this.brokerHousekeepingService = new BrokerHousekeepingService(this);
+		this.configuration = new Configuration(log, this.namesrvConfig, this.nettyServerConfig);
+		this.configuration.setStorePathFromConfig(this.namesrvConfig, "configStorePath");
+	}
 
-    public boolean initialize() {
+	public boolean initialize() {
 
-    	//将JSON形式的KV文件包装成KVConfigSerializeWrapper，通过getConfigTable方法转换成map放在configTable中
-        this.kvConfigManager.load();
-        //建立一个NettyRemotingServer，即Netty服务器，channelEventListener就是之前创建的BrokerHousekeepingService
-        this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
+		// 将JSON形式的KV文件包装成KVConfigSerializeWrapper，通过getConfigTable方法转换成map放在configTable中
+		this.kvConfigManager.load();
+		// 建立一个NettyRemotingServer，即Netty服务器，channelEventListener就是之前创建的BrokerHousekeepingService
+		this.remotingServer = new NettyRemotingServer(this.nettyServerConfig, this.brokerHousekeepingService);
 
-        this.remotingExecutor =
-            Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(), new ThreadFactoryImpl("RemotingExecutorThread_"));
+		this.remotingExecutor = Executors.newFixedThreadPool(nettyServerConfig.getServerWorkerThreads(),
+				new ThreadFactoryImpl("RemotingExecutorThread_"));
 
-        this.registerProcessor();
+		this.registerProcessor();
 
-        this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
+		this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
-            @Override
-            public void run() {
-                NamesrvController.this.routeInfoManager.scanNotActiveBroker();
-            }
-        }, 5, 10, TimeUnit.SECONDS);
+			@Override
+			public void run() {
+				NamesrvController.this.routeInfoManager.scanNotActiveBroker();
+			}
+		}, 5, 10, TimeUnit.SECONDS);
 
-        this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
+		this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
-            @Override
-            public void run() {
-                NamesrvController.this.kvConfigManager.printAllPeriodically();
-            }
-        }, 1, 10, TimeUnit.MINUTES);
+			@Override
+			public void run() {
+				NamesrvController.this.kvConfigManager.printAllPeriodically();
+			}
+		}, 1, 10, TimeUnit.MINUTES);
 
-        if (TlsSystemConfig.tlsMode != TlsMode.DISABLED) {
-            // Register a listener to reload SslContext
-            try {
-                fileWatchService = new FileWatchService(
-                    new String[] {
-                        TlsSystemConfig.tlsServerCertPath,
-                        TlsSystemConfig.tlsServerKeyPath,
-                        TlsSystemConfig.tlsServerTrustCertPath
-                    },
-                    new FileWatchService.Listener() {
-                        boolean certChanged, keyChanged = false;
-                        @Override
-                        public void onChanged(String path) {
-                            if (path.equals(TlsSystemConfig.tlsServerTrustCertPath)) {
-                                log.info("The trust certificate changed, reload the ssl context");
-                                reloadServerSslContext();
-                            }
-                            if (path.equals(TlsSystemConfig.tlsServerCertPath)) {
-                                certChanged = true;
-                            }
-                            if (path.equals(TlsSystemConfig.tlsServerKeyPath)) {
-                                keyChanged = true;
-                            }
-                            if (certChanged && keyChanged) {
-                                log.info("The certificate and private key changed, reload the ssl context");
-                                certChanged = keyChanged = false;
-                                reloadServerSslContext();
-                            }
-                        }
-                        private void reloadServerSslContext() {
-                            ((NettyRemotingServer) remotingServer).loadSslContext();
-                        }
-                    });
-            } catch (Exception e) {
-                log.warn("FileWatchService created error, can't load the certificate dynamically");
-            }
-        }
+		if (TlsSystemConfig.tlsMode != TlsMode.DISABLED) {
+			// Register a listener to reload SslContext
+			try {
+				fileWatchService = new FileWatchService(new String[] { TlsSystemConfig.tlsServerCertPath,
+						TlsSystemConfig.tlsServerKeyPath, TlsSystemConfig.tlsServerTrustCertPath },
+						new FileWatchService.Listener() {
+							boolean certChanged, keyChanged = false;
 
-        return true;
-    }
+							@Override
+							public void onChanged(String path) {
+								if (path.equals(TlsSystemConfig.tlsServerTrustCertPath)) {
+									log.info("The trust certificate changed, reload the ssl context");
+									reloadServerSslContext();
+								}
+								if (path.equals(TlsSystemConfig.tlsServerCertPath)) {
+									certChanged = true;
+								}
+								if (path.equals(TlsSystemConfig.tlsServerKeyPath)) {
+									keyChanged = true;
+								}
+								if (certChanged && keyChanged) {
+									log.info("The certificate and private key changed, reload the ssl context");
+									certChanged = keyChanged = false;
+									reloadServerSslContext();
+								}
+							}
 
-    private void registerProcessor() {
-        if (namesrvConfig.isClusterTest()) {
+							private void reloadServerSslContext() {
+								((NettyRemotingServer) remotingServer).loadSslContext();
+							}
+						});
+			} catch (Exception e) {
+				log.warn("FileWatchService created error, can't load the certificate dynamically");
+			}
+		}
 
-            this.remotingServer.registerDefaultProcessor(new ClusterTestRequestProcessor(this, namesrvConfig.getProductEnvName()),
-                this.remotingExecutor);
-        } else {
+		return true;
+	}
 
-            this.remotingServer.registerDefaultProcessor(new DefaultRequestProcessor(this), this.remotingExecutor);
-        }
-    }
+	private void registerProcessor() {
+		if (namesrvConfig.isClusterTest()) {
 
-    public void start() throws Exception {
-        this.remotingServer.start();
+			this.remotingServer.registerDefaultProcessor(
+					new ClusterTestRequestProcessor(this, namesrvConfig.getProductEnvName()), this.remotingExecutor);
+		} else {
 
-        if (this.fileWatchService != null) {
-            this.fileWatchService.start();
-        }
-    }
+			this.remotingServer.registerDefaultProcessor(new DefaultRequestProcessor(this), this.remotingExecutor);
+		}
+	}
 
-    public void shutdown() {
-        this.remotingServer.shutdown();
-        this.remotingExecutor.shutdown();
-        this.scheduledExecutorService.shutdown();
+	public void start() throws Exception {
+		this.remotingServer.start();
 
-        if (this.fileWatchService != null) {
-            this.fileWatchService.shutdown();
-        }
-    }
+		if (this.fileWatchService != null) {
+			this.fileWatchService.start();
+		}
+	}
 
-    public NamesrvConfig getNamesrvConfig() {
-        return namesrvConfig;
-    }
+	public void shutdown() {
+		this.remotingServer.shutdown();
+		this.remotingExecutor.shutdown();
+		this.scheduledExecutorService.shutdown();
 
-    public NettyServerConfig getNettyServerConfig() {
-        return nettyServerConfig;
-    }
+		if (this.fileWatchService != null) {
+			this.fileWatchService.shutdown();
+		}
+	}
 
-    public KVConfigManager getKvConfigManager() {
-        return kvConfigManager;
-    }
+	public NamesrvConfig getNamesrvConfig() {
+		return namesrvConfig;
+	}
 
-    public RouteInfoManager getRouteInfoManager() {
-        return routeInfoManager;
-    }
+	public NettyServerConfig getNettyServerConfig() {
+		return nettyServerConfig;
+	}
 
-    public RemotingServer getRemotingServer() {
-        return remotingServer;
-    }
+	public KVConfigManager getKvConfigManager() {
+		return kvConfigManager;
+	}
 
-    public void setRemotingServer(RemotingServer remotingServer) {
-        this.remotingServer = remotingServer;
-    }
+	public RouteInfoManager getRouteInfoManager() {
+		return routeInfoManager;
+	}
 
-    public Configuration getConfiguration() {
-        return configuration;
-    }
+	public RemotingServer getRemotingServer() {
+		return remotingServer;
+	}
+
+	public void setRemotingServer(RemotingServer remotingServer) {
+		this.remotingServer = remotingServer;
+	}
+
+	public Configuration getConfiguration() {
+		return configuration;
+	}
 }
