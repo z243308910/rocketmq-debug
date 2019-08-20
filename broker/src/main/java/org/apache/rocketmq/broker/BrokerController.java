@@ -113,6 +113,7 @@ public class BrokerController {
     private final NettyServerConfig nettyServerConfig;
     private final NettyClientConfig nettyClientConfig;
     private final MessageStoreConfig messageStoreConfig;
+    //用来管理消费者的消费消息的进度，主要通过一张map来缓存
     private final ConsumerOffsetManager consumerOffsetManager;
     private final ConsumerManager consumerManager;
     private final ConsumerFilterManager consumerFilterManager;
@@ -405,11 +406,14 @@ public class BrokerController {
             }
 
             if (!messageStoreConfig.isEnableDLegerCommitLog()) {
+            	//当当前角色是Slave时
                 if (BrokerRole.SLAVE == this.messageStoreConfig.getBrokerRole()) {
+                	 // 如果当前Broker配置中指定了haMasterAddress,则赋值 HAClient 的 masterAddress
                     if (this.messageStoreConfig.getHaMasterAddress() != null && this.messageStoreConfig.getHaMasterAddress().length() >= 6) {
                         this.messageStore.updateHaMasterAddress(this.messageStoreConfig.getHaMasterAddress());
                         this.updateMasterHAServerAddrPeriodically = false;
                     } else {
+                    	 //如果配置中未指定Master的IP,则定期从Namesrv处更新获取
                         this.updateMasterHAServerAddrPeriodically = true;
                     }
                 } else {
@@ -820,10 +824,14 @@ public class BrokerController {
     }
 
     public void start() throws Exception {
+    	// 启动消息存储，包括启动commitlog的定时刷新、启动消费列队的定时刷新、启动定时的检查和文件清理等
         if (this.messageStore != null) {
             this.messageStore.start();
         }
 
+        // 这里的remotingServer和fastRemotingServer在之前我们分析Broker初始化流程时
+        // 在BrokerController.registerProcessor()方法中，我们看到了为两者注册的处理器都是一样的
+        // 所以我们暂时可以认为两者的作用是一样的，两者的区别遇到具体分析
         if (this.remotingServer != null) {
             this.remotingServer.start();
         }
@@ -833,36 +841,45 @@ public class BrokerController {
         }
 
         if (this.fileWatchService != null) {
+        	// 启动重新加载SslContext监听器
             this.fileWatchService.start();
         }
 
+        // 提供broker对外调用的api，例如提供注册/注销broker到NameServer等远程调用
         if (this.brokerOuterAPI != null) {
             this.brokerOuterAPI.start();
         }
 
+        // pull模式的请求处理，在消息到达时进行通知
         if (this.pullRequestHoldService != null) {
             this.pullRequestHoldService.start();
         }
 
+        // 主要用于扫描异常的channel，并在发现异常时进行移除和关闭等处理
+        // 同时会接受一些channel事件，同样进行移除和关闭等处理
         if (this.clientHousekeepingService != null) {
             this.clientHousekeepingService.start();
         }
 
+        // 创建FilterServer，通过调用shell启动命令实现
         if (this.filterServerManager != null) {
             this.filterServerManager.start();
         }
 
         if (!messageStoreConfig.isEnableDLegerCommitLog()) {
+        	// 如果是slave角色的broker，启动事务消息检查，遍历未提交、未回滚的部分消息并向生产者发送检查请求以获取事务状态
+        	// 进行偏移量的检查和计算等操作，并移除掉需要丢弃的消息
             startProcessorByHa(messageStoreConfig.getBrokerRole());
+            // 处理slave同步操作，同步topic配置、消费者偏移量、延迟偏移量、订阅组配置等信息
             handleSlaveSynchronize(messageStoreConfig.getBrokerRole());
         }
 
 
-
+        // 注册broker到NameServer
         this.registerBrokerAll(true, false, true);
 
+        //broker启动10s后每隔30秒向nameserver发送一次心跳
         this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
-
             @Override
             public void run() {
                 try {
@@ -873,10 +890,12 @@ public class BrokerController {
             }
         }, 1000 * 10, Math.max(10000, Math.min(brokerConfig.getRegisterNameServerPeriod(), 60000)), TimeUnit.MILLISECONDS);
 
+        // BrokerStatsManager主要用于管理broker的状态，维护一些状态值，如put topic的数量、大小等
         if (this.brokerStatsManager != null) {
             this.brokerStatsManager.start();
         }
 
+        // 快速失败处理，主要用户清理掉各个队列中已经过期的请求
         if (this.brokerFastFailure != null) {
             this.brokerFastFailure.start();
         }

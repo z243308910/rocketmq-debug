@@ -200,6 +200,10 @@ public abstract class NettyRemotingAbstract {
                 public void run() {
                     try {
                         doBeforeRpcHooks(RemotingHelper.parseChannelRemoteAddr(ctx.channel()), cmd);
+                        //调用的DefaultRequestProcessor的processRequest方法
+                        //根据不同的RequestCode，执行不同的方法
+                        //REGISTER_BROKER = 103 注册Broker
+                        //GET_ROUTEINTO_BY_TOPIC = 105 获取Topic路由信息
                         final RemotingCommand response = pair.getObject1().processRequest(ctx, cmd);
                         doAfterRpcHooks(RemotingHelper.parseChannelRemoteAddr(ctx.channel()), cmd, response);
 
@@ -371,15 +375,20 @@ public abstract class NettyRemotingAbstract {
      * </p>
      */
     public void scanResponseTable() {
+    	// 记录所有移除的请求
         final List<ResponseFuture> rfList = new LinkedList<ResponseFuture>();
+        // responseTable缓存所有正在进行的请求
         Iterator<Entry<Integer, ResponseFuture>> it = this.responseTable.entrySet().iterator();
         while (it.hasNext()) {
             Entry<Integer, ResponseFuture> next = it.next();
             ResponseFuture rep = next.getValue();
-
+            // 判断请求是否过期
             if ((rep.getBeginTimestamp() + rep.getTimeoutMillis() + 1000) <= System.currentTimeMillis()) {
+            	// 释放信号量
                 rep.release();
+                // 移除当前请求
                 it.remove();
+                // 添加到移除请求列表中
                 rfList.add(rep);
                 log.warn("remove timeout request, " + rep);
             }

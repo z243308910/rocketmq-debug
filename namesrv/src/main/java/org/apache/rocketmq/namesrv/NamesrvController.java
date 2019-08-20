@@ -81,24 +81,29 @@ public class NamesrvController {
 
 		this.registerProcessor();
 
+		//定时清除不活跃的Broker
 		this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
 			@Override
 			public void run() {
+				/* 每隔10秒扫描未激活的broker */
 				NamesrvController.this.routeInfoManager.scanNotActiveBroker();
 			}
 		}, 5, 10, TimeUnit.SECONDS);
 
+		//定时完成configTable的日志记录
 		this.scheduledExecutorService.scheduleAtFixedRate(new Runnable() {
 
 			@Override
 			public void run() {
+				// 每隔10分钟打印KV配置表的内容
 				NamesrvController.this.kvConfigManager.printAllPeriodically();
 			}
 		}, 1, 10, TimeUnit.MINUTES);
 
 		if (TlsSystemConfig.tlsMode != TlsMode.DISABLED) {
-			// Register a listener to reload SslContext
+
+			// 注册一个监听器以重新加载SslContext
 			try {
 				fileWatchService = new FileWatchService(new String[] { TlsSystemConfig.tlsServerCertPath,
 						TlsSystemConfig.tlsServerKeyPath, TlsSystemConfig.tlsServerTrustCertPath },
