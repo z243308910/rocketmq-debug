@@ -100,6 +100,7 @@ public class RouteInfoManager {
         return topicList.encode();
     }
 
+    /**处理broker注册  */
     public RegisterBrokerResult registerBroker(
         final String clusterName,
         final String brokerAddr,
@@ -107,6 +108,7 @@ public class RouteInfoManager {
         final long brokerId,
         final String haServerAddr,
         final TopicConfigSerializeWrapper topicConfigWrapper,
+        //消息过滤服务器列表。
         final List<String> filterServerList,
         final Channel channel) {
         RegisterBrokerResult result = new RegisterBrokerResult();

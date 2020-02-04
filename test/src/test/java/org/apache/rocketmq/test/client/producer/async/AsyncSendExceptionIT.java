@@ -97,7 +97,7 @@ public class AsyncSendExceptionIT extends BaseConf {
         MessageQueue mq = new MessageQueue(topic, broker1Name, queueId);
         Message msg = new Message(topic, RandomUtils.getStringByUUID().getBytes());
         DefaultMQProducer producer = ProducerFactory.getRMQProducer(nsAddr);
-
+        
         producer.send(msg, mq, new SendCallback() {
             @Override
             public void onSuccess(SendResult sendResult) {
